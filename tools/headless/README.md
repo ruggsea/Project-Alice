@@ -6,7 +6,7 @@ Run many AI-only campaigns on Linux without a window, dump what happens each mon
 
 ```
 cd <folder with the game files and assets>   # same working directory the game normally runs from
-./Alice <scenario>.bin -headless -seed 1 -threads 1 -years 100 -dump out/s1
+./Alice <scenario>.bin -headless -seed 1 -threads 1 -fastdemo 1 -years 100 -dump out/s1
 # or for a mod:  ./Alice --mod mod/GFM.mod -headless -seed 1 -threads 1 -years 100 -dump out/s1
 ```
 
@@ -17,6 +17,8 @@ cd <folder with the game files and assets>   # same working directory the game n
 | `-seed N` | fixed game seed (otherwise random) |
 | `-threads N` | cap worker threads. With `-threads 1` a run is reproducible: same seed, same campaign |
 | `-dump DIR` | write the CSVs below into DIR |
+| `-fastdemo N` | `1`: add up the daily demographic totals in one pass over the pops instead of one per key, about 10% faster on one core, same results bit for bit. `2`: run both and compare every value each day (`FASTDEMO_CHECK` lines). `3`: same with a deliberate bug, to see the check fail |
+| `-shot YYYY-MM-DD MODE OUT.png` | map screenshot on that date (needs a build with `-DALICE_HEADLESS_SHOTS=ON`) |
 
 ## What `-dump` writes
 
