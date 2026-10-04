@@ -209,7 +209,7 @@ void enforce_list_order() {
 int main(int argc, char* argv[]) {
 	// headless batch flags: -seed N (fixed game seed), -years N (with -headless: run N game years at full speed, then exit),
 	// -dump DIR (monthly CSVs, see headless_run.hpp), -threads N (cap worker threads; 1 makes runs reproducible),
-	// -shot YYYY-MM-DD MODE OUT.png (map screenshot on that date, repeatable)
+	// -shot YYYY-MM-DD MODE OUT.png (map screenshot on that date, repeatable), -fastdemo N (see system_state.hpp)
 	int run_years = -1;
 	std::string dump_dir;
 	std::unique_ptr<oneapi::tbb::global_control> thread_cap;
@@ -235,6 +235,8 @@ int main(int argc, char* argv[]) {
 #endif
 			shots.push_back(r);
 		}
+		else if(std::string(argv[i]) == "-fastdemo")
+			game_state.fast_demographics = std::atoi(argv[i + 1]);
 		else if(std::string(argv[i]) == "-threads")
 			thread_cap = std::make_unique<oneapi::tbb::global_control>(oneapi::tbb::global_control::max_allowed_parallelism, size_t(std::atoi(argv[i + 1])));
 	}

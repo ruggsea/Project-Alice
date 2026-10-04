@@ -959,6 +959,7 @@ struct alignas(64) state {
 
 	FILE* war_log = nullptr; // headless -dump: wars.csv, see military.cpp log_war_row
 	FILE* event_log = nullptr; // headless -dump: events.csv (date,kind,id,legacy_id,nation,province)
+	int32_t fast_demographics = 0; // -fastdemo N: 1 one pass over pops for the demographic totals (bit-identical), 2 also run the per-key version and compare, 3 same with a deliberate bug (the compare must fail)
 
 	// common data for the window
 	int32_t x_size = 0;

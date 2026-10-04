@@ -1,3 +1,4 @@
+#include <cstring>
 #include "demographics.hpp"
 #include "dcon_generated_ids.hpp"
 #include "system_state.hpp"
@@ -278,6 +279,189 @@ void regenerate_jingoism_support(sys::state& state, dcon::nation_id n) {
 	}
 }
 
+// -fastdemo: the per-key totals of regenerate_from_pop_data (alt = false) and alt_st_regenerate_from_pop_data (alt = true)
+// in one pass over the pops instead of one pass per key.
+// Bit-identical to the per-key versions: each (province, key) cell receives the same non-zero terms in the same pop order,
+// and the terms the per-key version adds that are zero cannot change a sum that starts at +0 (x + 0 == x, +0 + -0 == +0).
+template<bool alt, typename T>
+auto get_province_demo(sys::state& state, T p, dcon::demographics_key key) {
+	if constexpr(alt) return state.world.province_get_demographics_alt(p, key); else return state.world.province_get_demographics(p, key);
+}
+template<bool alt, typename T, typename V>
+void set_province_demo(sys::state& state, T p, dcon::demographics_key key, V v) {
+	if constexpr(alt) state.world.province_set_demographics_alt(p, key, v); else state.world.province_set_demographics(p, key, v);
+}
+template<bool alt, typename T>
+auto get_state_demo(sys::state& state, T p, dcon::demographics_key key) {
+	if constexpr(alt) return state.world.state_instance_get_demographics_alt(p, key); else return state.world.state_instance_get_demographics(p, key);
+}
+template<bool alt, typename T, typename V>
+void set_state_demo(sys::state& state, T p, dcon::demographics_key key, V v) {
+	if constexpr(alt) state.world.state_instance_set_demographics_alt(p, key, v); else state.world.state_instance_set_demographics(p, key, v);
+}
+template<bool alt, typename T>
+auto get_nation_demo(sys::state& state, T p, dcon::demographics_key key) {
+	if constexpr(alt) return state.world.nation_get_demographics_alt(p, key); else return state.world.nation_get_demographics(p, key);
+}
+template<bool alt, typename T, typename V>
+void set_nation_demo(sys::state& state, T p, dcon::demographics_key key, V v) {
+	if constexpr(alt) state.world.nation_set_demographics_alt(p, key, v); else state.world.nation_set_demographics(p, key, v);
+}
+
+template<bool alt>
+void aggregate_demographics_key(sys::state& state, dcon::demographics_key key) {
+	state.world.execute_serial_over_state_instance(
+			[&](auto si) { set_state_demo<alt>(state, si, key, ve::fp_vector()); });
+	province::for_each_land_province(state, [&](dcon::province_id p) {
+		auto location = state.world.province_get_state_membership(p);
+		auto current = get_state_demo<alt>(state, location, key);
+		if(location) {
+			set_state_demo<alt>(state, location, key, current + get_province_demo<alt>(state, p, key));
+		}
+	});
+	state.world.execute_serial_over_nation([&](auto ni) { set_nation_demo<alt>(state, ni, key, ve::fp_vector()); });
+	state.world.for_each_state_instance([&](dcon::state_instance_id s) {
+		auto location = state.world.state_instance_get_nation_from_state_ownership(s);
+		auto current = get_nation_demo<alt>(state, location, key);
+		if(location) {
+			set_nation_demo<alt>(state, location, key, current + get_state_demo<alt>(state, s, key));
+		}
+	});
+}
+
+template<bool alt>
+void fused_sum_over_demographics(sys::state& state, uint32_t csz, uint32_t lo, uint32_t hi) {
+	auto in_today = [&](uint32_t k) { return k < csz || (k >= lo && k < hi); };
+	for(uint32_t k = 0; k < hi; ++k) {
+		if(!in_today(k))
+			continue;
+		dcon::demographics_key key{dcon::demographics_key::value_base_t(k)};
+		province::ve_for_each_land_province(state, [&](auto pi) { set_province_demo<alt>(state, pi, key, ve::fp_vector()); });
+	}
+	uint32_t const n_pt = state.world.pop_type_size();
+	uint32_t const culture_base = count_special_keys + 2 * n_pt;
+	uint32_t const ideology_base = culture_base + state.world.culture_size();
+	uint32_t const issue_base = ideology_base + state.world.ideology_size();
+	uint32_t const religion_base = issue_base + state.world.issue_option_size();
+
+	state.world.for_each_pop([&](dcon::pop_id p) {
+		auto location = state.world.pop_get_province_from_pop_location(p);
+		auto add = [&](uint32_t k, float v) {
+			if(v != 0.0f) {
+				dcon::demographics_key key{dcon::demographics_key::value_base_t(k)};
+				auto current = get_province_demo<alt>(state, location, key);
+				set_province_demo<alt>(state, location, key, current + v);
+			}
+		};
+		auto size = state.world.pop_get_size(p);
+		dcon::pop_type_id pt = state.world.pop_get_poptype(p);
+		auto strata = state.world.pop_type_get_strata(pt);
+		bool colonial = state.world.province_get_is_colonial(location);
+		auto mil = pop_demographics::get_militancy(state, p);
+		auto lit = pop_demographics::get_literacy(state, p);
+		auto life = pop_demographics::get_life_needs(state, p);
+		auto everyday = pop_demographics::get_everyday_needs(state, p);
+		auto luxury = pop_demographics::get_luxury_needs(state, p);
+		uint8_t movement_issue_type = 255;
+		if(!colonial) {
+			auto movement = state.world.pop_get_movement_from_pop_movement_membership(p);
+			if(movement) {
+				auto opt = state.world.movement_get_associated_issue_option(movement);
+				auto optpar = state.world.issue_option_get_parent_issue(opt);
+				if(opt)
+					movement_issue_type = state.world.issue_get_issue_type(optpar);
+			}
+		}
+		bool poor = strata == uint8_t(culture::pop_strata::poor);
+		bool middle = strata == uint8_t(culture::pop_strata::middle);
+		bool rich = strata == uint8_t(culture::pop_strata::rich);
+
+		add(total.index(), size);
+		add(employable.index(), state.world.pop_type_get_has_unemployment(pt) ? size : 0.0f);
+		add(employed.index(), pop_demographics::get_employment(state, p));
+		add(consciousness.index(), pop_demographics::get_consciousness(state, p) * size);
+		add(militancy.index(), mil * size);
+		add(literacy.index(), lit * size);
+		add(political_reform_desire.index(), movement_issue_type == uint8_t(culture::issue_type::political) ? size : 0.0f);
+		add(social_reform_desire.index(), movement_issue_type == uint8_t(culture::issue_type::social) ? size : 0.0f);
+		add(poor_militancy.index(), poor ? mil * size : 0.0f);
+		add(middle_militancy.index(), middle ? mil * size : 0.0f);
+		add(rich_militancy.index(), rich ? mil * size : 0.0f);
+		add(poor_life_needs.index(), poor ? life * size : 0.0f);
+		add(middle_life_needs.index(), middle ? life * size : 0.0f);
+		add(rich_life_needs.index(), rich ? life * size : 0.0f);
+		add(poor_everyday_needs.index(), poor ? everyday * size : 0.0f);
+		add(middle_everyday_needs.index(), middle ? everyday * size : 0.0f);
+		add(rich_everyday_needs.index(), rich ? everyday * size : 0.0f);
+		add(poor_luxury_needs.index(), poor ? luxury * size : 0.0f);
+		add(middle_luxury_needs.index(), middle ? luxury * size : 0.0f);
+		add(rich_luxury_needs.index(), rich ? luxury * size : 0.0f);
+		add(poor_total.index(), poor ? size : 0.0f);
+		add(middle_total.index(), middle ? size : 0.0f);
+		add(rich_total.index(), rich ? size : 0.0f);
+		add(non_colonial_literacy.index(), !colonial ? lit * size : 0.0f);
+		add(non_colonial_total.index(), !colonial ? size : 0.0f);
+		{
+			auto owner = state.world.province_get_nation_from_province_ownership(location);
+			auto culture = state.world.pop_get_culture(p);
+			bool accepted = state.world.nation_get_primary_culture(owner) == culture || state.world.nation_get_accepted_cultures(owner, culture);
+			add(primary_or_accepted.index(), accepted ? size : 0.0f);
+		}
+		static_assert(count_special_keys == 26);
+		if(pt) {
+			add(count_special_keys + pt.index(), size);
+			add(count_special_keys + n_pt + pt.index(), state.world.pop_type_get_has_unemployment(pt) ? pop_demographics::get_employment(state, p) : size);
+		}
+		if(dcon::culture_id c = state.world.pop_get_culture(p); c && in_today(culture_base + c.index()))
+			add(culture_base + c.index(), size);
+		if(lo < issue_base && hi > ideology_base) {
+			for(uint32_t k = std::max(lo, ideology_base); k < std::min(hi, issue_base); ++k) {
+				dcon::ideology_id i{dcon::ideology_id::value_base_t(k - ideology_base)};
+				add(k, pop_demographics::get_demo(state, p, pop_demographics::to_key(state, i)) * size);
+			}
+		}
+		if(lo < religion_base && hi > issue_base) {
+			for(uint32_t k = std::max(lo, issue_base); k < std::min(hi, religion_base); ++k) {
+				dcon::issue_option_id i{dcon::issue_option_id::value_base_t(k - issue_base)};
+				add(k, pop_demographics::get_demo(state, p, pop_demographics::to_key(state, i)) * size);
+			}
+		}
+		if(dcon::religion_id r = state.world.pop_get_religion(p); r && in_today(religion_base + r.index()) && state.fast_demographics != 3) // 3 = deliberate bug to prove the check fails
+			add(religion_base + r.index(), size);
+	});
+
+	for(uint32_t k = 0; k < hi; ++k) {
+		if(in_today(k))
+			aggregate_demographics_key<alt>(state, dcon::demographics_key{dcon::demographics_key::value_base_t(k)});
+	}
+}
+
+template<bool alt>
+std::vector<float> snapshot_demographics(sys::state& state, uint32_t csz, uint32_t lo, uint32_t hi) { // today's keys in every province, state and nation
+	std::vector<float> out;
+	for(uint32_t k = 0; k < hi; ++k) {
+		if(k >= csz && k < lo)
+			continue;
+		dcon::demographics_key key{dcon::demographics_key::value_base_t(k)};
+		for(auto p : state.world.in_province) out.push_back(get_province_demo<alt>(state, p.id, key));
+		for(auto si : state.world.in_state_instance) out.push_back(get_state_demo<alt>(state, si.id, key));
+		for(auto n : state.world.in_nation) out.push_back(get_nation_demo<alt>(state, n.id, key));
+	}
+	return out;
+}
+
+template<bool alt>
+void compare_with_fused(sys::state& state, uint32_t csz, uint32_t lo, uint32_t hi, std::vector<float> const& fused_result) { // -fastdemo 2 and 3
+	auto reference = snapshot_demographics<alt>(state, csz, lo, hi);
+	size_t mismatches = 0;
+	for(size_t i = 0; i < reference.size(); ++i)
+		if(std::memcmp(&reference[i], &fused_result[i], sizeof(float)) != 0)
+			++mismatches;
+	auto ymd = state.current_date.to_ymd(state.start_date);
+	if(mismatches > 0 || ymd.day == 1)
+		printf("FASTDEMO_CHECK %04d-%02d-%02d %s values=%zu mismatches=%zu\n", int(ymd.year), int(ymd.month), int(ymd.day), alt ? "alt" : "main", reference.size(), mismatches);
+}
+
 template<bool full>
 void regenerate_from_pop_data(sys::state& state) {
 	auto const sz = size(state);
@@ -285,6 +469,19 @@ void regenerate_from_pop_data(sys::state& state) {
 	auto const extra_size = sz - csz;
 	auto const extra_group_size = (extra_size + extra_demo_grouping - 1) / extra_demo_grouping;
 
+	uint32_t keys_lo = csz, keys_hi = sz;
+	if constexpr(!full) {
+		keys_lo = csz + extra_group_size * (state.current_date.value % extra_demo_grouping);
+		keys_hi = std::min(sz, keys_lo + extra_group_size);
+	}
+	std::vector<float> fused_result;
+	if(state.fast_demographics >= 2) { // verify mode: fused first, then the original overwrites, then compare bit for bit
+		fused_sum_over_demographics<false>(state, csz, keys_lo, keys_hi);
+		fused_result = snapshot_demographics<false>(state, csz, keys_lo, keys_hi);
+	}
+	if(state.fast_demographics == 1) {
+		fused_sum_over_demographics<false>(state, csz, keys_lo, keys_hi);
+	} else
 	concurrency::parallel_for(uint32_t(0), full ?  sz : csz + extra_group_size, [&](uint32_t base_index) {
 		auto index = base_index;
 		if constexpr(!full) {
@@ -536,6 +733,8 @@ void regenerate_from_pop_data(sys::state& state) {
 		}
 	});
 
+	if(state.fast_demographics >= 2)
+		compare_with_fused<false>(state, csz, keys_lo, keys_hi, fused_result);
 	//
 	// calculate values derived from demographics
 	//
@@ -1476,6 +1675,19 @@ void alt_st_regenerate_from_pop_data(sys::state& state) {
 	auto const extra_size = sz - csz;
 	auto const extra_group_size = (extra_size + extra_demo_grouping - 1) / extra_demo_grouping;
 
+	uint32_t keys_lo = csz, keys_hi = sz;
+	if constexpr(!full) {
+		keys_lo = csz + extra_group_size * (state.current_date.value % extra_demo_grouping);
+		keys_hi = std::min(sz, keys_lo + extra_group_size);
+	}
+	std::vector<float> fused_result;
+	if(state.fast_demographics >= 2) { // verify mode: fused first, then the original overwrites, then compare bit for bit
+		fused_sum_over_demographics<true>(state, csz, keys_lo, keys_hi);
+		fused_result = snapshot_demographics<true>(state, csz, keys_lo, keys_hi);
+	}
+	if(state.fast_demographics == 1)
+		fused_sum_over_demographics<true>(state, csz, keys_lo, keys_hi);
+	else
 	for(uint32_t base_index = 0; base_index < (full ? sz : csz + extra_group_size); ++ base_index) {
 		auto index = base_index;
 		if constexpr(!full) {
@@ -1726,6 +1938,9 @@ void alt_st_regenerate_from_pop_data(sys::state& state) {
 			});
 		}
 	}
+
+	if(state.fast_demographics >= 2)
+		compare_with_fused<true>(state, csz, keys_lo, keys_hi, fused_result);
 
 	if constexpr(full == false) { // copies
 		for(uint32_t base_index = csz; base_index < (full ? sz : csz + extra_group_size); ++base_index) {
