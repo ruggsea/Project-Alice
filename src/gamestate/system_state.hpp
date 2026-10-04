@@ -957,6 +957,9 @@ struct alignas(64) state {
 	std::chrono::time_point<std::chrono::steady_clock> last_update = std::chrono::steady_clock::now();
 	bool internally_paused = false; // should NOT be set from the ui context (but may be read)
 
+	FILE* war_log = nullptr; // headless -dump: wars.csv, see military.cpp log_war_row
+	FILE* event_log = nullptr; // headless -dump: events.csv (date,kind,id,legacy_id,nation,province)
+
 	// common data for the window
 	int32_t x_size = 0;
 	int32_t y_size = 0;

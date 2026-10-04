@@ -99,9 +99,17 @@ bool event_has_options(sys::state& state, T id) {
 	return b;
 }
 
+static std::string event_log_date(sys::state& state) { // headless: events.csv date column
+	auto ymd = state.current_date.to_ymd(state.start_date);
+	char b[16];
+	snprintf(b, sizeof(b), "%04d-%02d-%02d", int(ymd.year), int(ymd.month), int(ymd.day));
+	return b;
+}
+
 void trigger_national_event(sys::state& state, dcon::national_event_id e, dcon::nation_id n, uint32_t r_lo, uint32_t r_hi, int32_t primary_slot, slot_type pt, int32_t from_slot, slot_type ft) {
 	if(!state.world.national_event_get_name(e) && !state.world.national_event_get_immediate_effect(e) && !event_has_options(state, e))
 		return; // event without data
+	if(state.event_log) fprintf(state.event_log, "%s,%s,%d,%d,%d,%d\n", event_log_date(state).c_str(), "nat", e.index(), -1, n.index(), -1);
 	if(ft == slot_type::province)
 		assert(dcon::fatten(state.world, state.world.province_get_nation_from_province_ownership(trigger::to_prov(from_slot))).is_valid());
 
@@ -202,6 +210,7 @@ void trigger_national_event(sys::state& state, dcon::free_national_event_id e, d
 		return;
 	if(!state.world.free_national_event_get_name(e) && !state.world.free_national_event_get_immediate_effect(e) && !event_has_options(state, e))
 		return; // event without data
+	if(state.event_log) fprintf(state.event_log, "%s,%s,%d,%d,%d,%d\n", event_log_date(state).c_str(), "free_nat", e.index(), int(state.world.free_national_event_get_legacy_id(e)), n.index(), -1);
 
 	state.world.free_national_event_set_has_been_triggered(e, true);
 	if(state.world.free_national_event_get_is_major(e)) {
@@ -295,6 +304,7 @@ void trigger_provincial_event(sys::state& state, dcon::provincial_event_id e, dc
 	assert(e && "Potential invalid write incoming");
 	if(!state.world.provincial_event_get_name(e) && !state.world.provincial_event_get_immediate_effect(e) && !event_has_options(state, e))
 		return; // event without data
+	if(state.event_log) fprintf(state.event_log, "%s,%s,%d,%d,%d,%d\n", event_log_date(state).c_str(), "prov", e.index(), -1, state.world.province_get_nation_from_province_ownership(p).index(), p.index());
 	if(ft == slot_type::province)
 		assert(dcon::fatten(state.world, state.world.province_get_nation_from_province_ownership(trigger::to_prov(from_slot))).is_valid());
 
@@ -370,6 +380,7 @@ void trigger_provincial_event(sys::state& state, dcon::free_provincial_event_id 
 		return;
 	if(!state.world.free_provincial_event_get_name(e) && !state.world.free_provincial_event_get_immediate_effect(e) && !event_has_options(state, e))
 		return; // event without data
+	if(state.event_log) fprintf(state.event_log, "%s,%s,%d,%d,%d,%d\n", event_log_date(state).c_str(), "free_prov", e.index(), -1, state.world.province_get_nation_from_province_ownership(p).index(), p.index());
 
 	state.world.free_provincial_event_set_has_been_triggered(e, true);
 	if(auto immediate = state.world.free_provincial_event_get_immediate_effect(e); immediate) {

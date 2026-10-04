@@ -1553,6 +1553,12 @@ void update_great_powers(sys::state& state) {
 		std::sort(state.great_nations.begin(), state.great_nations.end(), [&](sys::great_nation& a, sys::great_nation& b) {
 			return state.world.nation_get_rank(a.nation) < state.world.nation_get_rank(b.nation);
 		});
+		if(state.event_log) { // headless: events.csv, great_nations order after every change (kind gp, id = position)
+			auto ymd = state.current_date.to_ymd(state.start_date);
+			for(uint32_t gi = 0; gi < state.great_nations.size(); ++gi) {
+				fprintf(state.event_log, "%04d-%02d-%02d,gp,%u,-1,%d,-1\n", int(ymd.year), int(ymd.month), int(ymd.day), gi, state.great_nations[gi].nation.index());
+			}
+		}
 	}
 }
 
@@ -4209,6 +4215,10 @@ void make_uncivilized(sys::state& state, dcon::nation_id n) {
 }
 
 void enact_reform(sys::state& state, dcon::nation_id source, dcon::reform_option_id r) {
+	if(state.event_log) { // headless: events.csv
+		auto ymd = state.current_date.to_ymd(state.start_date);
+		fprintf(state.event_log, "%04d-%02d-%02d,reform,%d,-1,%d,-1\n", int(ymd.year), int(ymd.month), int(ymd.day), r.index(), source.index());
+	}
 	/*
 	For military/economic reforms:
 	- Run the `on_execute` member
@@ -4256,6 +4266,10 @@ void enact_reform(sys::state& state, dcon::nation_id source, dcon::reform_option
 }
 
 void take_decision(sys::state& state, dcon::nation_id source, dcon::decision_id d) {
+	if(state.event_log) { // headless: events.csv
+		auto ymd = state.current_date.to_ymd(state.start_date);
+		fprintf(state.event_log, "%04d-%02d-%02d,decision,%d,-1,%d,-1\n", int(ymd.year), int(ymd.month), int(ymd.day), d.index(), source.index());
+	}
 	if(auto e = state.world.decision_get_effect(d); e) {
 		effect::execute(state, e, trigger::to_generic(source), trigger::to_generic(source), 0, uint32_t(state.current_date.value),
 				uint32_t(source.index() << 4 ^ d.index()));
@@ -4280,6 +4294,10 @@ void take_decision(sys::state& state, dcon::nation_id source, dcon::decision_id 
 
 
 void enact_issue(sys::state& state, dcon::nation_id source, dcon::issue_option_id i) {
+	if(state.event_log) { // headless: events.csv
+		auto ymd = state.current_date.to_ymd(state.start_date);
+		fprintf(state.event_log, "%04d-%02d-%02d,issue,%d,-1,%d,-1\n", int(ymd.year), int(ymd.month), int(ymd.day), i.index(), source.index());
+	}
 
 	auto e = state.world.issue_option_get_on_execute_effect(i);
 	if(e) {

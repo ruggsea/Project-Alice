@@ -2910,6 +2910,61 @@ war_role get_role(sys::state const& state, dcon::war_id w, dcon::nation_id n) {
 	return war_role::none;
 }
 
+// headless war log (GPL-3.0): one CSV row per war start, peace deal and war end, with both sides' strength, so the
+// war-outcome odds can be fitted on Alice's own campaigns. Written only when state.war_log is open (headless -dump).
+static std::string tag_or_empty(sys::state& state, dcon::nation_id n) {
+	return n ? nations::int_to_tag(state.world.national_identity_get_identifying_int(state.world.nation_get_identity_from_identity_holder(n))) : "";
+}
+
+static void log_war_row(sys::state& state, dcon::war_id w, char const* event, std::string const& extra) {
+	if(!state.war_log)
+		return;
+	std::string side_tags[2];
+	float mil[2] = {0, 0}, regs[2] = {0, 0}, pop[2] = {0, 0};
+	for(auto par : state.world.war_get_war_participant(w)) {
+		int i = par.get_is_attacker() ? 0 : 1;
+		auto n = par.get_nation();
+		side_tags[i] += (side_tags[i].empty() ? "" : "|") + tag_or_empty(state, n);
+		mil[i] += float(state.world.nation_get_military_score(n));
+		regs[i] += float(state.world.nation_get_active_regiments(n));
+		pop[i] += state.world.nation_get_demographics(n, demographics::total);
+	}
+	auto pa = state.world.war_get_primary_attacker(w);
+	auto pd = state.world.war_get_primary_defender(w);
+	int adjacent = bool(state.world.get_nation_adjacency_by_nation_adjacency_pair(pa, pd)) ? 1 : 0;
+	auto ca = state.world.nation_get_capital(pa);
+	auto cd = state.world.nation_get_capital(pd);
+	int same_continent = (ca && cd && state.world.province_get_continent(ca) == state.world.province_get_continent(cd)) ? 1 : 0;
+	std::string goals;
+	for(auto wg : state.world.war_get_wargoals_attached(w))
+		goals += (goals.empty() ? "" : "|") + text::produce_simple_string(state, wg.get_wargoal().get_type().get_name());
+	for(auto& c : goals)
+		if(c == ',')
+			c = ';';
+	auto d = state.current_date.to_ymd(state.start_date);
+	auto s = state.world.war_get_start_date(w).to_ymd(state.start_date);
+	fprintf(state.war_log, "%04d-%02d-%02d,%s,%d,%04d-%02d-%02d,%s,%s,%s,%s,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.4g,%.4g,%.4g,%d,%d,%d,%d,%.6g,%.6g,%s,%s\n",
+			d.year, int(d.month), int(d.day), event, int(w.index()), s.year, int(s.month), int(s.day),
+			tag_or_empty(state, state.world.war_get_primary_attacker(w)).c_str(),
+			tag_or_empty(state, state.world.war_get_primary_defender(w)).c_str(),
+			side_tags[0].c_str(), side_tags[1].c_str(), mil[0], mil[1], regs[0], regs[1], pop[0], pop[1],
+			primary_warscore(state, w), primary_warscore_from_occupation(state, w), primary_warscore_from_battles(state, w),
+			adjacent, same_continent, int(state.world.nation_get_is_civilized(pa)), int(state.world.nation_get_is_civilized(pd)),
+			float(total_ships(state, pa)), float(total_ships(state, pd)), goals.c_str(),
+			extra.c_str());
+}
+
+static std::string wargoal_names(sys::state& state, dcon::peace_offer_id offer) {
+	std::string out;
+	for(auto item : state.world.peace_offer_get_peace_offer_item(offer)) {
+		out += (out.empty() ? "" : "|") + text::produce_simple_string(state, item.get_wargoal().get_type().get_name());
+	}
+	for(auto& c : out)
+		if(c == ',')
+			c = ';';
+	return out;
+}
+
 dcon::war_id create_war(sys::state& state, dcon::nation_id primary_attacker, dcon::nation_id primary_defender,
 		dcon::cb_type_id primary_wargoal, dcon::state_definition_id primary_wargoal_state,
 		dcon::national_identity_id primary_wargoal_tag, dcon::nation_id primary_wargoal_secondary) {
@@ -2978,6 +3033,7 @@ dcon::war_id create_war(sys::state& state, dcon::nation_id primary_attacker, dco
 		dcon::province_id{ }
 	});
 
+	log_war_row(state, new_war, "START", "");
 	return new_war;
 }
 
@@ -3270,6 +3326,7 @@ void remove_from_war(sys::state& state, dcon::war_id w, dcon::nation_id n, bool 
 }
 
 void cleanup_war(sys::state& state, dcon::war_id w, war_result result) {
+	log_war_row(state, w, "END", result == war_result::attacker_won ? "attacker_won" : result == war_result::defender_won ? "defender_won" : "draw");
 	auto par = state.world.war_get_war_participant(w);
 	state.military_definitions.pending_blackflag_update = true;
 
@@ -4026,6 +4083,9 @@ void implement_peace_offer(sys::state& state, dcon::peace_offer_id offer) {
 
 
 	auto war = state.world.peace_offer_get_war_from_war_settlement(offer);
+	if(war)
+		log_war_row(state, war, "PEACE", tag_or_empty(state, from) + ">" + tag_or_empty(state, target) +
+				(state.world.peace_offer_get_is_concession(offer) ? " concession " : " demand ") + wargoal_names(state, offer));
 
 
 	if(war) {
