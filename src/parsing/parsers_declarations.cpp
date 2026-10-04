@@ -3529,11 +3529,16 @@ void mod_file::add_to_file_system(simple_fs::file_system& fs){
 	for(auto s : replace_paths) {
 		auto const replace_path = simple_fs::correct_slashes(simple_fs::utf8_to_native(s));
 		if(replace_path == NATIVE("history")) {
-			simple_fs::add_ignore_path(fs, simple_fs::list_roots(fs)[0] + NATIVE("\\history\\countries"));
-			simple_fs::add_ignore_path(fs, simple_fs::list_roots(fs)[0] + NATIVE("\\history\\diplomacy"));
-			simple_fs::add_ignore_path(fs, simple_fs::list_roots(fs)[0] + NATIVE("\\history\\provinces"));
-			simple_fs::add_ignore_path(fs, simple_fs::list_roots(fs)[0] + NATIVE("\\history\\units"));
-			simple_fs::add_ignore_path(fs, simple_fs::list_roots(fs)[0] + NATIVE("\\history\\wars"));
+			// build these with the native separator like the generic branch below; hardcoded '\\' never matched the '/' paths on Linux
+			for(auto sub : { NATIVE("countries"), NATIVE("diplomacy"), NATIVE("provinces"), NATIVE("units"), NATIVE("wars") }) {
+				native_string path_block = simple_fs::list_roots(fs)[0];
+				path_block += NATIVE_DIR_SEPARATOR;
+				path_block += NATIVE("history");
+				path_block += NATIVE_DIR_SEPARATOR;
+				path_block += sub;
+				path_block += NATIVE_DIR_SEPARATOR;
+				simple_fs::add_ignore_path(fs, path_block);
+			}
 		} else if(replace_path == NATIVE("history\\pops")
 			|| replace_path == NATIVE("map")
 			|| replace_path == NATIVE("map\\terrain")) {
