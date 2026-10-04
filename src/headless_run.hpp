@@ -1,10 +1,12 @@
 #pragma once
 // Headless batch driver: runs N game years with no speed cap, prints seconds per game year, and with -dump DIR
-// writes monthly CSVs (nations, prices, provinces) plus wars.csv and events.csv. See tools/headless/README.md.
+// writes monthly CSVs (nations, prices, provinces) plus wars.csv and events.csv,
+// and with -shot takes map screenshots on given dates. See tools/headless/README.md.
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace headless {
 
@@ -16,6 +18,12 @@ inline std::string ymd_str(sys::year_month_day d) {
 inline std::string ymd_of(sys::state& state) {
 	return ymd_str(state.current_date.to_ymd(state.start_date));
 }
+
+} // namespace headless
+
+#include "headless_shot.hpp"
+
+namespace headless {
 
 inline std::string tag_of(sys::state& state, dcon::nation_id n) {
 	if(!n)
@@ -56,7 +64,7 @@ inline void dump_month(sys::state& state, FILE* nations_csv, FILE* prices_csv, F
 	});
 }
 
-inline void run(sys::state& state, int years, std::string const& dump_dir) {
+inline void run(sys::state& state, int years, std::string const& dump_dir, std::vector<shot_request> const& shots) {
 	using clock = std::chrono::steady_clock;
 	FILE* nations_csv = nullptr;
 	FILE* prices_csv = nullptr;
@@ -78,6 +86,14 @@ inline void run(sys::state& state, int years, std::string const& dump_dir) {
 				"defender_civilized,attacker_ships,defender_ships,wargoals,detail\n");
 	}
 
+	auto take_due_shots = [&]() {
+#ifdef ALICE_HEADLESS_SHOTS
+		for(auto& shot : shots)
+			if(shot.date == ymd_of(state))
+				screenshot(state, shot.mode, 2808, 1080, shot.path);
+#endif
+	};
+
 	auto start = state.current_date.to_ymd(state.start_date);
 	int const end_year = start.year + years;
 	int year = start.year;
@@ -85,6 +101,7 @@ inline void run(sys::state& state, int years, std::string const& dump_dir) {
 	fflush(stdout);
 	if(nations_csv)
 		dump_month(state, nations_csv, prices_csv, provinces_csv, ymd_str(start));
+	take_due_shots();
 
 	state.user_settings.autosaves = sys::autosave_frequency::none; // parallel runs would share one autosave slot set
 	auto t_start = clock::now();
@@ -93,6 +110,7 @@ inline void run(sys::state& state, int years, std::string const& dump_dir) {
 		command::execute_pending_commands(state);
 		state.single_game_tick();
 		auto ymd = state.current_date.to_ymd(state.start_date);
+		take_due_shots();
 		if(ymd.day == 1 && nations_csv) {
 			dump_month(state, nations_csv, prices_csv, provinces_csv, ymd_str(ymd));
 			fflush(nations_csv);

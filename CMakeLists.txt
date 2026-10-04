@@ -437,6 +437,14 @@ else() # GCC or CLANG
 	target_link_libraries(AliceCommon INTERFACE dl)
 endif()
 target_link_libraries(AliceCommon INTERFACE dependency_DataContainer)
+
+# Headless map screenshots (-shot): offscreen rendering through EGL, e.g. Mesa's surfaceless llvmpipe. Off by default.
+option(ALICE_HEADLESS_SHOTS "Build -shot map screenshots for -headless runs (needs libEGL)" OFF)
+if(ALICE_HEADLESS_SHOTS AND UNIX)
+	find_library(EGL_LIBRARY EGL REQUIRED)
+	target_link_libraries(AliceCommon INTERFACE ${EGL_LIBRARY})
+	target_compile_definitions(AliceCommon INTERFACE ALICE_HEADLESS_SHOTS)
+endif()
 target_link_libraries(AliceCommon INTERFACE dependency_DataContainerLua)
 target_link_libraries(AliceCommon INTERFACE dependency_DataContainerOOSReporter)
 target_link_libraries(AliceCommon INTERFACE libglew_static)

@@ -208,10 +208,12 @@ void enforce_list_order() {
 
 int main(int argc, char* argv[]) {
 	// headless batch flags: -seed N (fixed game seed), -years N (with -headless: run N game years at full speed, then exit),
-	// -dump DIR (monthly CSVs, see headless_run.hpp), -threads N (cap worker threads; 1 makes runs reproducible)
+	// -dump DIR (monthly CSVs, see headless_run.hpp), -threads N (cap worker threads; 1 makes runs reproducible),
+	// -shot YYYY-MM-DD MODE OUT.png (map screenshot on that date, repeatable)
 	int run_years = -1;
 	std::string dump_dir;
 	std::unique_ptr<oneapi::tbb::global_control> thread_cap;
+	std::vector<headless::shot_request> shots;
 	for(int i = 1; i + 1 < argc; ++i) {
 		if(std::string(argv[i]) == "-seed")
 			setenv("ALICE_SEED", argv[i + 1], 1);
@@ -219,6 +221,20 @@ int main(int argc, char* argv[]) {
 			run_years = std::atoi(argv[i + 1]);
 		else if(std::string(argv[i]) == "-dump")
 			dump_dir = argv[i + 1];
+		else if(std::string(argv[i]) == "-shotcolors") // -shotcolors FILE: province colours for every -shot (see headless_shot.hpp)
+			headless::shot_colors_file = argv[i + 1];
+		else if(std::string(argv[i]) == "-shot" && i + 3 < argc) { // -shot YYYY-MM-DD MODE OUT.png
+			headless::shot_request r{argv[i + 1], map_mode::mode::political, argv[i + 3]};
+			if(!headless::parse_map_mode(argv[i + 2], r.mode)) {
+				fprintf(stderr, "unknown map mode %s\n", argv[i + 2]);
+				return 2;
+			}
+#ifndef ALICE_HEADLESS_SHOTS
+			fprintf(stderr, "-shot needs a build with -DALICE_HEADLESS_SHOTS=ON\n");
+			return 2;
+#endif
+			shots.push_back(r);
+		}
 		else if(std::string(argv[i]) == "-threads")
 			thread_cap = std::make_unique<oneapi::tbb::global_control>(oneapi::tbb::global_control::max_allowed_parallelism, size_t(std::atoi(argv[i + 1])));
 	}
@@ -392,7 +408,7 @@ int main(int argc, char* argv[]) {
 		for(auto n : game_state.world.in_nation)
 			n.set_is_player_controlled(false);
 		if(run_years >= 0) {
-			headless::run(game_state, run_years, dump_dir);
+			headless::run(game_state, run_years, dump_dir, shots);
 			return EXIT_SUCCESS;
 		}
 		game_state.game_loop();
